@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- 恒久対策の確認: タスクごとのディレクトリ（APP_LOG_ID）に書く。ほかは log4j2-shared.xml と同じ。 -->
+<Configuration status="WARN" name="lab-pertask">
+  <Properties>
+    <Property name="LOG_DIR">/webapp/webapp9mf02/logs/${env:APP_LOG_ID:-unknown}</Property>
+  </Properties>
+  <Appenders>
+    <RollingFile name="APP"
+                 fileName="${LOG_DIR}/app.log"
+                 filePattern="${LOG_DIR}/app-%d{yyyy-MM-dd-HH-mm-ss}.log.gz">
+      <PatternLayout pattern="%d{HH:mm:ss.SSS} %m%n"/>
+      <Policies>
+        <TimeBasedTriggeringPolicy interval="10" modulate="true"/>
+      </Policies>
+      <DefaultRolloverStrategy/>
+    </RollingFile>
+  </Appenders>
+  <Loggers>
+    <Root level="info">
+      <AppenderRef ref="APP"/>
+    </Root>
+  </Loggers>
+</Configuration>

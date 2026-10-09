@@ -1,0 +1,512 @@
+# S1_v41  別タスク（別 NFS クライアント）が、Java が開いているログファイルを削除する（NFSv4.1）
+# 2026-10-09 23:31:00 +0900
+
+$ [a] grep ' /mnt/logs ' /proc/mounts; ls -l /webapp/webapp9mf02/logs
+172.30.0.10:/logs-root /mnt/logs nfs4 rw,relatime,vers=4.1,rsize=524288,wsize=524288,namlen=255,hard,noresvport,proto=tcp,timeo=600,retrans=2,sec=sys,clientaddr=172.30.0.11,local_lock=none,addr=172.30.0.10 0 0
+lrwxrwxrwx 1 root root 30 Oct  9 13:36 /webapp/webapp9mf02/logs -> /mnt/logs/front/inter-api/logs
+
+$ [b] date '+%H:%M:%S.%3N'; ls -li /mnt/logs/front/inter-api/logs; rm -v /mnt/logs/front/inter-api/logs/app.log
+14:31:05.001
+total 0
+138262 -rw-r--r-- 1 root root 0 Oct  9 14:31 app.log
+removed '/mnt/logs/front/inter-api/logs/app.log'
+
+$ [a] bash /opt/tools/estale-diag.sh -q; echo exit=$?
+
+== 判定
+- FD 1 個が名前の無い実体を掴んでいる: 改名・削除済み。EFS 上で消されていれば次の書き込みで Stale になる
+→ 優先対応: 消した側（別タスクのロールオーバ・削除バッチ・手作業）を特定して止め、JBoss の reload かタスク入れ替えで開き直す
+exit=1
+
+$ [a] cat /tmp/s1.out
+14:31:01.541 [A] opened /webapp/webapp9mf02/logs/app.log (append)
+14:31:23.795 [A] close OK
+14:31:23.799 [A] SUMMARY writes=74 errors=0 firstError=-
+>>> 判定 [OK] 期待: knfsd は実体を残すのでエラーにならない（書いた行は消える） / 観測: SUMMARY writes=74 errors=0 firstError=-
+# S1_v3  別タスク（別 NFS クライアント）が、Java が開いているログファイルを削除する（NFSv3）
+# 2026-10-09 23:31:28 +0900
+
+$ [a] grep ' /mnt/logs ' /proc/mounts; ls -l /webapp/webapp9mf02/logs
+172.30.0.10:/export/logs-root /mnt/logs nfs rw,relatime,vers=3,rsize=524288,wsize=524288,namlen=255,hard,nolock,proto=tcp,timeo=600,retrans=2,sec=sys,mountaddr=172.30.0.10,mountvers=3,mountproto=tcp,local_lock=all,addr=172.30.0.10 0 0
+lrwxrwxrwx 1 root root 30 Oct  9 13:36 /webapp/webapp9mf02/logs -> /mnt/logs/front/inter-api/logs
+
+$ [b] date '+%H:%M:%S.%3N'; ls -li /mnt/logs/front/inter-api/logs; rm -v /mnt/logs/front/inter-api/logs/app.log
+14:31:33.308
+total 0
+138264 -rw-r--r-- 1 root root 0 Oct  9 14:31 app.log
+removed '/mnt/logs/front/inter-api/logs/app.log'
+
+$ [a] bash /opt/tools/estale-diag.sh -q; echo exit=$?
+
+== 判定
+- Java が掴んでいるファイル 1 個が Stale: 別タスク・別ホストがそのファイル（または親ディレクトリ）を削除した。JBoss の reload かタスク入れ替えで開き直す。根本対策はタスクごとのログパス
+→ 優先対応: 消した側（別タスクのロールオーバ・削除バッチ・手作業）を特定して止め、JBoss の reload かタスク入れ替えで開き直す
+exit=1
+
+$ [a] cat /tmp/s1.out
+14:31:29.816 [A] opened /webapp/webapp9mf02/logs/app.log (append)
+14:31:37.958 [A] write FAILED at seq=28
+java.io.IOException: Stale file handle
+	at java.base/java.io.FileOutputStream.writeBytes(Native Method)
+	at java.base/java.io.FileOutputStream.write(FileOutputStream.java:346)
+	at StaleLab.raw(StaleLab.java:58)
+	at StaleLab.main(StaleLab.java:41)
+14:31:43.666 [A] still failing: errors=20 (Stale file handle)
+14:31:49.684 [A] still failing: errors=40 (Stale file handle)
+14:31:52.089 [A] close FAILED: java.io.IOException: Stale file handle
+14:31:52.091 [A] SUMMARY writes=74 errors=47 firstError=14:31:37.951 seq=28
+>>> 判定 [OK] 期待: 書き込みが ESTALE（IOException: Stale file handle） / 観測: SUMMARY writes=74 errors=47 firstError=14:31:37.951 seq=28
+# S2  別クライアントが、ログのディレクトリを削除して作り直す（NFSv4.1）
+# 2026-10-09 23:31:57 +0900
+
+$ [b] stat -c 'before inode=%i' /mnt/logs/front/inter-api/logs; rm -rf /mnt/logs/front/inter-api/logs && mkdir -p /mnt/logs/front/inter-api/logs && stat -c 'after  inode=%i' /mnt/logs/front/inter-api/logs
+before inode=138252
+after  inode=138261
+
+$ [a] cat /tmp/s2.out
+--- ls .（カレントディレクトリ）
+ls: .: Stale file handle
+ls: cannot open directory '.': Stale file handle
+rc=2
+--- ls（パス名で引き直す）
+total 8
+drwxr-xr-x 2 root root 4096 Oct  9 14:32 .
+drwxr-xr-x 3 root root 4096 Oct  9 14:32 ..
+rc=0
+--- 新しいファイルを作る
+NEWFILE_OK
+>>> 判定 [OK] 期待: 掴んでいるもの（カレントディレクトリ）は ESTALE、パス名で開き直すものは自動で直る / 観測: cwd=ESTALE / パス名=OK / 新規作成=OK
+# S3_v41  別クライアントが、マウントの根元（rootDirectory・アクセスポイントのルート）を削除して作り直す（NFSv4.1）
+# 2026-10-09 23:32:09 +0900
+
+$ [b] stat -c 'before inode=%i' /mnt/logs/logs-root; rm -rf /mnt/logs/logs-root && mkdir -p /mnt/logs/logs-root/front/inter-api/logs && stat -c 'after  inode=%i' /mnt/logs/logs-root
+before inode=138237
+after  inode=138266
+
+$ [a] ls -la /mnt/logs; echo rc=$?; stat /mnt/logs; echo rc=$?; mkdir -p /mnt/logs/front/inter-api/logs; echo rc=$?; touch /webapp/webapp9mf02/logs/probe.txt; echo rc=$?
+ls: cannot open directory '/mnt/logs': Stale file handle
+rc=2
+stat: cannot statx '/mnt/logs': Stale file handle
+rc=1
+mkdir: cannot create directory '/mnt/logs': Stale file handle
+rc=1
+touch: cannot touch '/webapp/webapp9mf02/logs/probe.txt': No such file or directory
+rc=1
+
+$ [a] bash /opt/tools/estale-diag.sh -q --probe; echo exit=$?
+
+== 判定
+- /mnt/logs の根元が Stale: EFS 側で rootDirectory／アクセスポイントのルート（またはその上）が削除・作り直しされた。このタスクでは直らない → タスクを入れ替える
+- /webapp/webapp9mf02/logs の行き先が無い: EFS 側のディレクトリが未作成・削除済み、または上位が Stale（マウント欄を確認）
+- Java が掴んでいるファイル 1 個が Stale: 別タスク・別ホストがそのファイル（または親ディレクトリ）を削除した。JBoss の reload かタスク入れ替えで開き直す。根本対策はタスクごとのログパス
+- /mnt/logs に新しいファイルを作れない（ENOENT）: ロールオーバや新しいログも書けない
+→ 優先対応: このタスクを入れ替える（aws ecs stop-task、またはサービスの force-new-deployment）
+exit=2
+
+$ [a] cat /tmp/s3.out
+14:32:10.607 [A] opened /webapp/webapp9mf02/logs/app.log (append)
+14:32:30.763 [A] close OK
+14:32:30.767 [A] SUMMARY writes=67 errors=0 firstError=-
+
+$ [a] マウントし直す（ECS ではタスクの入れ替えに相当）
+
+$ [a] ls -la /webapp/webapp9mf02/logs/ && touch /webapp/webapp9mf02/logs/probe.txt && echo REMOUNT_OK
+total 8
+drwxr-xr-x 2 root root 4096 Oct  9 14:32 .
+drwxr-xr-x 3 root root 4096 Oct  9 14:32 ..
+REMOUNT_OK
+>>> 判定 [OK] 期待: ls・stat・mkdir が ESTALE、マウントし直すまで直らない / 観測: マウント中は ESTALE / 再マウントで回復 / Java: SUMMARY writes=67 errors=0 firstError=-
+# S3_v3  別クライアントが、マウントの根元（rootDirectory・アクセスポイントのルート）を削除して作り直す（NFSv3）
+# 2026-10-09 23:32:35 +0900
+
+$ [b] stat -c 'before inode=%i' /mnt/logs/logs-root; rm -rf /mnt/logs/logs-root && mkdir -p /mnt/logs/logs-root/front/inter-api/logs && stat -c 'after  inode=%i' /mnt/logs/logs-root
+before inode=138238
+after  inode=138252
+
+$ [a] ls -la /mnt/logs; echo rc=$?; stat /mnt/logs; echo rc=$?; mkdir -p /mnt/logs/front/inter-api/logs; echo rc=$?; touch /webapp/webapp9mf02/logs/probe.txt; echo rc=$?
+ls: cannot open directory '/mnt/logs': Stale file handle
+rc=2
+stat: cannot statx '/mnt/logs': Stale file handle
+rc=1
+mkdir: cannot create directory '/mnt/logs': Stale file handle
+rc=1
+touch: cannot touch '/webapp/webapp9mf02/logs/probe.txt': No such file or directory
+rc=1
+
+$ [a] bash /opt/tools/estale-diag.sh -q --probe; echo exit=$?
+
+== 判定
+- /mnt/logs の根元が Stale: EFS 側で rootDirectory／アクセスポイントのルート（またはその上）が削除・作り直しされた。このタスクでは直らない → タスクを入れ替える
+- /webapp/webapp9mf02/logs の行き先が無い: EFS 側のディレクトリが未作成・削除済み、または上位が Stale（マウント欄を確認）
+- Java が掴んでいるファイル 1 個が Stale: 別タスク・別ホストがそのファイル（または親ディレクトリ）を削除した。JBoss の reload かタスク入れ替えで開き直す。根本対策はタスクごとのログパス
+- /mnt/logs に新しいファイルを作れない（ENOENT）: ロールオーバや新しいログも書けない
+→ 優先対応: このタスクを入れ替える（aws ecs stop-task、またはサービスの force-new-deployment）
+exit=2
+
+$ [a] cat /tmp/s3.out
+14:32:36.354 [A] opened /webapp/webapp9mf02/logs/app.log (append)
+14:32:39.394 [A] write FAILED at seq=11
+java.io.IOException: Stale file handle
+	at java.base/java.io.FileOutputStream.writeBytes(Native Method)
+	at java.base/java.io.FileOutputStream.write(FileOutputStream.java:346)
+	at StaleLab.raw(StaleLab.java:58)
+	at StaleLab.main(StaleLab.java:41)
+14:32:45.103 [A] still failing: errors=20 (Stale file handle)
+14:32:51.117 [A] still failing: errors=40 (Stale file handle)
+14:32:56.524 [A] close FAILED: java.io.IOException: Stale file handle
+14:32:56.525 [A] SUMMARY writes=67 errors=57 firstError=14:32:39.388 seq=11
+
+$ [a] マウントし直す（ECS ではタスクの入れ替えに相当）
+
+$ [a] ls -la /webapp/webapp9mf02/logs/ && touch /webapp/webapp9mf02/logs/probe.txt && echo REMOUNT_OK
+total 8
+drwxr-xr-x 2 root root 4096 Oct  9 14:32 .
+drwxr-xr-x 3 root root 4096 Oct  9 14:32 ..
+REMOUNT_OK
+>>> 判定 [OK] 期待: ls・stat・mkdir が ESTALE、マウントし直すまで直らない / 観測: マウント中は ESTALE / 再マウントで回復 / Java: SUMMARY writes=67 errors=57 firstError=14:32:39.388 seq=11
+# S4  同じタスク（同じ NFS クライアント）の中で、Java が開いているファイルを削除する（NFSv4.1）
+# 2026-10-09 23:33:01 +0900
+
+$ [a] rm -v /webapp/webapp9mf02/logs/app.log; ls -la /webapp/webapp9mf02/logs/
+removed '/webapp/webapp9mf02/logs/app.log'
+total 12
+drwxr-xr-x 2 root root 4096 Oct  9 14:33 .
+drwxr-xr-x 3 root root 4096 Oct  9 14:33 ..
+-rw-r--r-- 1 root root  234 Oct  9 14:33 .nfs0000000000021c1900000004
+
+$ [a] bash /opt/tools/estale-diag.sh -q; echo exit=$?
+
+== 判定
+- FD 1 個が .nfs ファイル（同じタスク内で使用中に削除）: 容量を使い続け、閉じると中身ごと消える
+→ 優先対応: 消した側（別タスクのロールオーバ・削除バッチ・手作業）を特定して止め、JBoss の reload かタスク入れ替えで開き直す
+exit=1
+
+$ [a] cat /tmp/s4.out; echo '--- Java が閉じたあと'; ls -la /webapp/webapp9mf02/logs/
+14:33:02.172 [A] opened /webapp/webapp9mf02/logs/app.log (append)
+14:33:16.321 [A] close OK
+14:33:16.325 [A] SUMMARY writes=47 errors=0 firstError=-
+--- Java が閉じたあと
+total 8
+drwxr-xr-x 2 root root 4096 Oct  9 14:33 .
+drwxr-xr-x 3 root root 4096 Oct  9 14:33 ..
+>>> 判定 [OK] 期待: .nfsXXXX に改名されエラーにならない。閉じると中身ごと消える / 観測: SUMMARY writes=47 errors=0 firstError=- / 閉じた後の .nfs=0
+# S5  仮説の検証: Java が書いている最中に EFS のマウントを外して付け直す（NFSv4.1）
+# 2026-10-09 23:33:20 +0900
+
+$ [a] umount /mnt/logs; echo rc=$?
+umount: /mnt/logs: target is busy.
+rc=32
+
+$ [a] umount -l /mnt/logs; echo rc=$?; mount -i -t nfs4 -o vers=4.1,addr=172.30.0.10,hard,timeo=600,retrans=2,noresvport 172.30.0.10:/logs-root /mnt/logs; echo mount_rc=$?; grep ' /mnt/logs ' /proc/mounts | cut -c1-60; echo hi > /webapp/webapp9mf02/logs/after-remount.txt && echo NEW_OPEN_OK
+rc=0
+mount_rc=0
+172.30.0.10:/logs-root /mnt/logs nfs4 rw,relatime,vers=4.1,r
+NEW_OPEN_OK
+
+$ [a] cat /tmp/s5.out
+14:33:21.270 [A] opened /webapp/webapp9mf02/logs/app.log (append)
+14:33:41.429 [A] close OK
+14:33:41.432 [A] SUMMARY writes=67 errors=0 firstError=-
+
+$ [b] wc -l /mnt/logs/front/inter-api/logs/app.log; tail -1 /mnt/logs/front/inter-api/logs/app.log
+67 /mnt/logs/front/inter-api/logs/app.log
+14:33:41.126 task=A seq=67
+>>> 判定 [OK] 期待: ESTALE にならない（古い FD は外したマウント経由で書き続ける） / 観測: SUMMARY writes=67 errors=0 firstError=- / サーバ上の行数=67
+# S6_v3  2 タスクが同じ app.log に書き、Log4j2 が 10 秒ごとにロールオーバ（gz 圧縮→元ファイル削除）する（NFSv3）
+# 2026-10-09 23:33:46 +0900
+
+$ [a] bash /opt/tools/estale-diag.sh -q; echo exit=$?
+
+== 判定
+- Java が掴んでいるファイル 1 個が Stale: 別タスク・別ホストがそのファイル（または親ディレクトリ）を削除した。JBoss の reload かタスク入れ替えで開き直す。根本対策はタスクごとのログパス
+→ 優先対応: 消した側（別タスクのロールオーバ・削除バッチ・手作業）を特定して止め、JBoss の reload かタスク入れ替えで開き直す
+exit=1
+
+$ [a] grep -n -m6 -E 'ERROR|Caused by|IOException' /tmp/s6.out; grep -o 'SUMMARY.*' /tmp/s6.out
+2:2026-10-09T14:34:00.195889991Z main ERROR RollingFileManager /webapp/webapp9mf02/logs/app.log Unable to close stream: java.io.IOException: Stale file handle
+3:java.io.IOException: Stale file handle
+33:2026-10-09T14:34:13.050316840Z main ERROR Unable to write to stream /webapp/webapp9mf02/logs/app.log for appender APP
+62:Caused by: java.io.IOException: Stale file handle
+68:2026-10-09T14:34:13.051380536Z main ERROR An exception occurred processing Appender APP
+97:Caused by: java.io.IOException: Stale file handle
+SUMMARY events=225
+
+$ [b] grep -n -m6 -E 'ERROR|Caused by|IOException' /tmp/s6.out; grep -o 'SUMMARY.*' /tmp/s6.out
+2:2026-10-09T14:34:03.067980500Z main ERROR Unable to write to stream /webapp/webapp9mf02/logs/app.log for appender APP
+31:Caused by: java.io.IOException: Stale file handle
+37:2026-10-09T14:34:03.073135715Z main ERROR An exception occurred processing Appender APP
+66:Caused by: java.io.IOException: Stale file handle
+72:2026-10-09T14:34:03.274424195Z main ERROR Unable to write to stream /webapp/webapp9mf02/logs/app.log for appender APP
+101:Caused by: java.io.IOException: Stale file handle
+SUMMARY events=225
+
+$ [a] ls -la /webapp/webapp9mf02/logs/
+total 28
+drwxr-xr-x 2 root root 4096 Oct  9 14:34 .
+drwxr-xr-x 3 root root 4096 Oct  9 14:33 ..
+-rw-r--r-- 1 root root  112 Oct  9 14:33 app-2026-10-09-14-33-49.log.gz
+-rw-r--r-- 1 root root  262 Oct  9 14:34 app-2026-10-09-14-33-59.log.gz
+-rw-r--r-- 1 root root  276 Oct  9 14:34 app-2026-10-09-14-34-09.log.gz
+-rw-r--r-- 1 root root  184 Oct  9 14:34 app-2026-10-09-14-34-29.log.gz
+-rw-r--r-- 1 root root  812 Oct  9 14:34 app.log
+出力した行: A=225 B=225 / サーバに残った行: A=61 B=103
+>>> 判定 [OK] 期待: 片方に AppenderLoggingException … Caused by: IOException: Stale file handle / 観測: Stale の出現 A=12 B=10回 / 出力 A=225 B=225 / 残った A=61 B=103
+# S6_v41  2 タスクが同じ app.log に書き、Log4j2 が 10 秒ごとにロールオーバ（gz 圧縮→元ファイル削除）する（NFSv4.1）
+# 2026-10-09 23:34:41 +0900
+
+$ [a] bash /opt/tools/estale-diag.sh -q; echo exit=$?
+
+== 判定
+- FD 1 個が古い実体を掴んでいる（名前は別ファイル）: 同じパスを複数タスクが使い、他タスクがローテーションした跡。ログが想定と違うファイルに入っている
+→ 優先対応: 消した側（別タスクのロールオーバ・削除バッチ・手作業）を特定して止め、JBoss の reload かタスク入れ替えで開き直す
+exit=1
+
+$ [a] grep -n -m6 -E 'ERROR|Caused by|IOException' /tmp/s6.out; grep -o 'SUMMARY.*' /tmp/s6.out
+SUMMARY events=225
+
+$ [b] grep -n -m6 -E 'ERROR|Caused by|IOException' /tmp/s6.out; grep -o 'SUMMARY.*' /tmp/s6.out
+SUMMARY events=225
+
+$ [a] ls -la /webapp/webapp9mf02/logs/
+total 32
+drwxr-xr-x 2 root root 4096 Oct  9 14:35 .
+drwxr-xr-x 3 root root 4096 Oct  9 14:34 ..
+-rw-r--r-- 1 root root  159 Oct  9 14:34 app-2026-10-09-14-34-49.log.gz
+-rw-r--r-- 1 root root  277 Oct  9 14:35 app-2026-10-09-14-34-59.log.gz
+-rw-r--r-- 1 root root  275 Oct  9 14:35 app-2026-10-09-14-35-09.log.gz
+-rw-r--r-- 1 root root  284 Oct  9 14:35 app-2026-10-09-14-35-19.log.gz
+-rw-r--r-- 1 root root  273 Oct  9 14:35 app-2026-10-09-14-35-29.log.gz
+-rw-r--r-- 1 root root  168 Oct  9 14:35 app.log
+出力した行: A=225 B=225 / サーバに残った行: A=49 B=175
+>>> 判定 [OK] 期待: knfsd ではエラーが出ないことがあるが、行は欠ける / 観測: Stale の出現 A=0 B=0回 / 出力 A=225 B=225 / 残った A=49 B=175
+# S7  恒久対策の確認: タスクごとのディレクトリ（APP_LOG_ID）に書く。条件は S6 と同じ（NFSv3＝最も厳しいサーバ）
+# 2026-10-09 23:35:37 +0900
+
+$ [a] grep -c 'Stale file handle' /tmp/s7.out; grep -o 'SUMMARY.*' /tmp/s7.out
+0
+SUMMARY events=225
+
+$ [b] grep -c 'Stale file handle' /tmp/s7.out; grep -o 'SUMMARY.*' /tmp/s7.out
+0
+SUMMARY events=225
+
+$ [a] ls -la /webapp/webapp9mf02/logs/ /webapp/webapp9mf02/logs/task-a-0001 /webapp/webapp9mf02/logs/task-b-0002
+/webapp/webapp9mf02/logs/:
+total 16
+drwxr-xr-x 4 root root 4096 Oct  9 14:35 .
+drwxr-xr-x 3 root root 4096 Oct  9 14:35 ..
+drwxr-xr-x 2 root root 4096 Oct  9 14:36 task-a-0001
+drwxr-xr-x 2 root root 4096 Oct  9 14:36 task-b-0002
+
+/webapp/webapp9mf02/logs/task-a-0001:
+total 32
+drwxr-xr-x 2 root root 4096 Oct  9 14:36 .
+drwxr-xr-x 4 root root 4096 Oct  9 14:35 ..
+-rw-r--r-- 1 root root   99 Oct  9 14:35 app-2026-10-09-14-35-39.log.gz
+-rw-r--r-- 1 root root  278 Oct  9 14:35 app-2026-10-09-14-35-49.log.gz
+-rw-r--r-- 1 root root  276 Oct  9 14:36 app-2026-10-09-14-35-59.log.gz
+-rw-r--r-- 1 root root  281 Oct  9 14:36 app-2026-10-09-14-36-09.log.gz
+-rw-r--r-- 1 root root  271 Oct  9 14:36 app-2026-10-09-14-36-19.log.gz
+-rw-r--r-- 1 root root  476 Oct  9 14:36 app.log
+
+/webapp/webapp9mf02/logs/task-b-0002:
+total 28
+drwxr-xr-x 2 root root 4096 Oct  9 14:36 .
+drwxr-xr-x 4 root root 4096 Oct  9 14:35 ..
+-rw-r--r-- 1 root root  254 Oct  9 14:35 app-2026-10-09-14-35-49.log.gz
+-rw-r--r-- 1 root root  280 Oct  9 14:36 app-2026-10-09-14-35-59.log.gz
+-rw-r--r-- 1 root root  279 Oct  9 14:36 app-2026-10-09-14-36-09.log.gz
+-rw-r--r-- 1 root root  280 Oct  9 14:36 app-2026-10-09-14-36-19.log.gz
+-rw-r--r-- 1 root root  896 Oct  9 14:36 app.log
+出力した行: A=225 B=225 / サーバに残った行: A=225 B=225
+>>> 判定 [OK] 期待: ESTALE 0 件・欠けた行 0 / 観測: Stale A=0 B=0 / 出力 A=225 B=225 / 残った A=225 B=225
+# S8_v3  診断スクリプトの判定: 正常 → 改名して作り直し（REPLACED）→ 改名先も削除（STALE）（NFSv3）
+# 2026-10-09 23:36:31 +0900
+
+$ [a] bash /opt/tools/estale-diag.sh; echo exit=$?
+
+== 環境
+estale-diag 1.0.0  2026-10-09 14:36:34 +0000
+host=task-a  kernel=5.15.153.1-microsoft-standard-WSL2  uid=0
+
+== NFS マウント（EFS）
+[/mnt/logs] source=172.30.0.10:/export/logs-root type=nfs vers=3 hard timeo=600
+    統計: age=3s tcp接続回数=2 | サーバが返したエラー(op=回数): LOOKUP=1 
+    根元: OK (inode=138234)
+
+== シンボリックリンク
+[/webapp/webapp9mf02/logs] -> /mnt/logs/front/inter-api/logs  （最終: /mnt/logs/front/inter-api/logs）  OK inode=138249
+
+== Java プロセスが開いているファイル（NFS 上のもの）
+[pid 20] java: java -cp /opt/lab/classes:/opt/lab/lib/* StaleLab raw /webapp/webapp9mf02/logs/app.log ...
+    fd 4: OK      /mnt/logs/front/inter-api/logs/app.log (inode=138263)
+集計: STALE=0 REPLACED=0 MISSING=0 SILLY=0 OK=1
+
+== .nfsXXXX（使用中に削除されたファイルの名残）
+なし
+
+== 判定
+異常なし（Stale・応答なしは見つからない）
+exit=0
+
+$ [b] mv /mnt/logs/front/inter-api/logs/app.log /mnt/logs/front/inter-api/logs/app.1 && touch /mnt/logs/front/inter-api/logs/app.log && ls -li /mnt/logs/front/inter-api/logs
+total 0
+138263 -rw-r--r-- 1 root root 0 Oct  9 14:36 app.1
+138264 -rw-r--r-- 1 root root 0 Oct  9 14:36 app.log
+
+$ [a] bash /opt/tools/estale-diag.sh -q; echo exit=$?
+
+== 判定
+異常なし（Stale・応答なしは見つからない）
+exit=0
+
+$ [a] NFSv3 はディレクトリの属性キャッシュ（acdirmin=30 秒）が切れるまで改名に気づかないことがある。31 秒待ってもう一度
+
+$ [a] bash /opt/tools/estale-diag.sh -q; echo exit=$?
+
+== 判定
+- FD 1 個が古い実体を掴んでいる（名前は別ファイル）: 同じパスを複数タスクが使い、他タスクがローテーションした跡。ログが想定と違うファイルに入っている
+→ 優先対応: 消した側（別タスクのロールオーバ・削除バッチ・手作業）を特定して止め、JBoss の reload かタスク入れ替えで開き直す
+exit=1
+
+$ [b] rm -v /mnt/logs/front/inter-api/logs/app.1
+removed '/mnt/logs/front/inter-api/logs/app.1'
+
+$ [a] bash /opt/tools/estale-diag.sh -q; echo exit=$?
+
+== 判定
+- Java が掴んでいるファイル 1 個が Stale: 別タスク・別ホストがそのファイル（または親ディレクトリ）を削除した。JBoss の reload かタスク入れ替えで開き直す。根本対策はタスクごとのログパス
+→ 優先対応: 消した側（別タスクのロールオーバ・削除バッチ・手作業）を特定して止め、JBoss の reload かタスク入れ替えで開き直す
+exit=1
+
+$ [a] cat /tmp/s8.out
+14:36:32.384 [A] opened /webapp/webapp9mf02/logs/app.log (append)
+14:37:13.266 [A] write FAILED at seq=137
+java.io.IOException: Stale file handle
+	at java.base/java.io.FileOutputStream.writeBytes(Native Method)
+	at java.base/java.io.FileOutputStream.write(FileOutputStream.java:346)
+	at StaleLab.raw(StaleLab.java:58)
+	at StaleLab.main(StaleLab.java:41)
+14:37:18.972 [A] still failing: errors=20 (Stale file handle)
+14:37:24.987 [A] still failing: errors=40 (Stale file handle)
+14:37:30.995 [A] still failing: errors=60 (Stale file handle)
+14:37:37.003 [A] still failing: errors=80 (Stale file handle)
+14:37:42.409 [A] close FAILED: java.io.IOException: Stale file handle
+14:37:42.410 [A] SUMMARY writes=233 errors=97 firstError=14:37:13.257 seq=137
+>>> 判定 [OK] 期待: 正常は 0、改名後は REPLACED（1）。削除後は v3 で STALE（1）、knfsd v4.1 は STALE か REPLACED（1） / 観測: 正常=exit=0 / 改名+作り直し 1 秒後=exit=0（31 秒後=exit=1）REPLACED 表示 1 / 改名先も削除=exit=1（STALE 表示 1）
+# S8_v41  診断スクリプトの判定: 正常 → 改名して作り直し（REPLACED）→ 改名先も削除（STALE）（NFSv4.1）
+# 2026-10-09 23:37:46 +0900
+
+$ [a] bash /opt/tools/estale-diag.sh; echo exit=$?
+
+== 環境
+estale-diag 1.0.0  2026-10-09 14:37:49 +0000
+host=task-a  kernel=5.15.153.1-microsoft-standard-WSL2  uid=0
+
+== NFS マウント（EFS）
+[/mnt/logs] source=172.30.0.10:/logs-root type=nfs4 vers=4.1 hard timeo=600
+    統計: age=3s tcp接続回数=2 
+    根元: OK (inode=138235)
+
+== シンボリックリンク
+[/webapp/webapp9mf02/logs] -> /mnt/logs/front/inter-api/logs  （最終: /mnt/logs/front/inter-api/logs）  OK inode=138238
+
+== Java プロセスが開いているファイル（NFS 上のもの）
+[pid 20] java: java -cp /opt/lab/classes:/opt/lab/lib/* StaleLab raw /webapp/webapp9mf02/logs/app.log ...
+    fd 4: OK      /mnt/logs/front/inter-api/logs/app.log (inode=138263)
+集計: STALE=0 REPLACED=0 MISSING=0 SILLY=0 OK=1
+
+== .nfsXXXX（使用中に削除されたファイルの名残）
+なし
+
+== 判定
+異常なし（Stale・応答なしは見つからない）
+exit=0
+
+$ [b] mv /mnt/logs/front/inter-api/logs/app.log /mnt/logs/front/inter-api/logs/app.1 && touch /mnt/logs/front/inter-api/logs/app.log && ls -li /mnt/logs/front/inter-api/logs
+total 0
+138263 -rw-r--r-- 1 root root 0 Oct  9 14:37 app.1
+138264 -rw-r--r-- 1 root root 0 Oct  9 14:37 app.log
+
+$ [a] bash /opt/tools/estale-diag.sh -q; echo exit=$?
+
+== 判定
+- FD 1 個が古い実体を掴んでいる（名前は別ファイル）: 同じパスを複数タスクが使い、他タスクがローテーションした跡。ログが想定と違うファイルに入っている
+→ 優先対応: 消した側（別タスクのロールオーバ・削除バッチ・手作業）を特定して止め、JBoss の reload かタスク入れ替えで開き直す
+exit=1
+
+$ [b] rm -v /mnt/logs/front/inter-api/logs/app.1
+removed '/mnt/logs/front/inter-api/logs/app.1'
+
+$ [a] bash /opt/tools/estale-diag.sh -q; echo exit=$?
+
+== 判定
+- Java が掴んでいるファイル 1 個が Stale: 別タスク・別ホストがそのファイル（または親ディレクトリ）を削除した。JBoss の reload かタスク入れ替えで開き直す。根本対策はタスクごとのログパス
+→ 優先対応: 消した側（別タスクのロールオーバ・削除バッチ・手作業）を特定して止め、JBoss の reload かタスク入れ替えで開き直す
+exit=1
+
+$ [a] cat /tmp/s8.out
+14:37:47.362 [A] opened /webapp/webapp9mf02/logs/app.log (append)
+14:38:57.667 [A] close OK
+14:38:57.671 [A] SUMMARY writes=234 errors=0 firstError=-
+>>> 判定 [OK] 期待: 正常は 0、改名後は REPLACED（1）。削除後は v3 で STALE（1）、knfsd v4.1 は STALE か REPLACED（1） / 観測: 正常=exit=0 / 改名+作り直し 1 秒後=exit=1（31 秒後=-）REPLACED 表示 1 / 改名先も削除=exit=1（STALE 表示 1）
+# S9  参考: NFS サーバの再起動（同じ fsid）と、エクスポートの付け替え（fsid を変える）（NFSv3）
+# 2026-10-09 23:39:01 +0900
+
+$ [a] echo before > /webapp/webapp9mf02/logs/s9.txt && cat /webapp/webapp9mf02/logs/s9.txt
+before
+
+$ [server] 同じ fsid で NFS サーバを作り直す（再起動に相当）
+
+$ [a] cat /webapp/webapp9mf02/logs/s9.txt && echo after-restart >> /webapp/webapp9mf02/logs/s9.txt && echo RESTART_OK
+before
+RESTART_OK
+
+$ [server] fsid を 0 → 7 に変えて作り直す（エクスポートの付け替え）
+
+$ [a] cat /webapp/webapp9mf02/logs/s9.txt; echo rc=$?; ls /mnt/logs; echo rc=$?
+cat: /webapp/webapp9mf02/logs/s9.txt: Stale file handle
+rc=1
+ls: cannot access '/mnt/logs': Stale file handle
+rc=2
+
+$ [server] fsid を 0 に戻す
+>>> 判定 [OK] 期待: 再起動では ESTALE にならず、付け替えると ESTALE / 観測: 再起動=OK / 付け替え=ESTALE
+# S10  Log4j2 の保険（impl/log4j2-pertask.xml の Failover）: 別クライアントがファイルを消しても、ログは標準出力へ逃げる（NFSv3）
+# 2026-10-09 23:39:52 +0900
+
+$ [b] ls -la /mnt/logs/front/inter-api/logs/task-a-0001/; rm -v /mnt/logs/front/inter-api/logs/task-a-0001/app.log
+total 8
+drwxr-xr-x 2 root root 4096 Oct  9 14:39 .
+drwxr-xr-x 3 root root 4096 Oct  9 14:39 ..
+-rw-r--r-- 1 root root    0 Oct  9 14:39 app.log
+removed '/mnt/logs/front/inter-api/logs/task-a-0001/app.log'
+
+$ [a] grep -m4 -E 'ERROR|Stale' /tmp/s10.out | cut -c1-200; echo '--- 標準出力へ逃げた行（Failover）'; grep -c 'lab - task=A seq=' /tmp/s10.out; grep 'lab - task=A seq=' /tmp/s10.out | tail -2; grep -o 'SUMMARY.*' /tmp/s10.out
+2026-10-09T14:40:02.461299956Z main ERROR Unable to write to stream /webapp/webapp9mf02/logs/task-a-0001/app.log for appender APP_FILE
+	at StaleLab.log4j(StaleLab.java:88)
+	at StaleLab.main(StaleLab.java:43)
+Caused by: java.io.IOException: Stale file handle
+--- 標準出力へ逃げた行（Failover）
+80
+2026-10-09T14:40:18.103Z INFO  [main] lab - task=A seq=124
+2026-10-09T14:40:18.304Z INFO  [main] lab - task=A seq=125
+SUMMARY events=125
+>>> 判定 [OK] 期待: ファイルに書けない間のログが標準出力（CloudWatch Logs）に出る / 観測: 出力 125 行のうち 80 行が標準出力へ
+
+ケース  NFS   条件                                     期待                                                                                           観測                                                                                                          判定
+S1_v41  v4.1  別クライアントが開いているファイルを削除           knfsd は実体を残すのでエラーにならない（書いた行は消える）                                            SUMMARY writes=74 errors=0 firstError=-                                                                         OK
+S1_v3   v3    別クライアントが開いているファイルを削除           書き込みが ESTALE（IOException: Stale file handle）                                            SUMMARY writes=74 errors=47 firstError=14:31:37.951 seq=28                                                      OK
+S2      v4.1  ログのディレクトリを作り直す                    掴んでいるもの（カレントディレクトリ）は ESTALE、パス名で開き直すものは自動で直る                             cwd=ESTALE / パス名=OK / 新規作成=OK                                                                               OK
+S3_v41  v4.1  マウントの根元を作り直す                       ls・stat・mkdir が ESTALE、マウントし直すまで直らない                                                 マウント中は ESTALE / 再マウントで回復 / Java: SUMMARY writes=67 errors=0 firstError=-                               OK
+S3_v3   v3    マウントの根元を作り直す                       ls・stat・mkdir が ESTALE、マウントし直すまで直らない                                                 マウント中は ESTALE / 再マウントで回復 / Java: SUMMARY writes=67 errors=57 firstError=14:32:39.388 seq=11            OK
+S4      v4.1  同じクライアントで使用中ファイルを削除         .nfsXXXX に改名されエラーにならない。閉じると中身ごと消える                                              SUMMARY writes=47 errors=0 firstError=- / 閉じた後の .nfs=0                                                        OK
+S5      v4.1  書き込み中にマウントを外して付け直す（仮説）  ESTALE にならない（古い FD は外したマウント経由で書き続ける）                                           SUMMARY writes=67 errors=0 firstError=- / サーバ上の行数=67                                                      OK
+S6_v3   v3    2 タスクが同じファイル＋ロールオーバ            片方に AppenderLoggingException … Caused by: IOException: Stale file handle                   Stale の出現 A=12 B=10回 / 出力 A=225 B=225 / 残った A=61 B=103                                                    OK
+S6_v41  v4.1  2 タスクが同じファイル＋ロールオーバ            knfsd ではエラーが出ないことがあるが、行は欠ける                                                       Stale の出現 A=0 B=0回 / 出力 A=225 B=225 / 残った A=49 B=175                                                      OK
+S7      v3    タスクごとのディレクトリに書く（対策後）      ESTALE 0 件・欠けた行 0                                                                       Stale A=0 B=0 / 出力 A=225 B=225 / 残った A=225 B=225                                                             OK
+S8_v3   v3    診断スクリプトの判定                        正常は 0、改名後は REPLACED（1）。削除後は v3 で STALE（1）、knfsd v4.1 は STALE か REPLACED（1）  正常=exit=0 / 改名+作り直し 1 秒後=exit=0（31 秒後=exit=1）REPLACED 表示 1 / 改名先も削除=exit=1（STALE 表示 1）  OK
+S8_v41  v4.1  診断スクリプトの判定                        正常は 0、改名後は REPLACED（1）。削除後は v3 で STALE（1）、knfsd v4.1 は STALE か REPLACED（1）  正常=exit=0 / 改名+作り直し 1 秒後=exit=1（31 秒後=-）REPLACED 表示 1 / 改名先も削除=exit=1（STALE 表示 1）       OK
+S9      v3    サーバ再起動 / fsid の付け替え                再起動では ESTALE にならず、付け替えると ESTALE                                                      再起動=OK / 付け替え=ESTALE                                                                                        OK
+S10     v3    Failover の保険（ファイルが消された後）        ファイルに書けない間のログが標準出力（CloudWatch Logs）に出る                                         出力 125 行のうち 80 行が標準出力へ                                                                                 OK
+EXIT=0

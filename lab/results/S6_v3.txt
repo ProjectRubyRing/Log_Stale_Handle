@@ -1,0 +1,39 @@
+# S6_v3  2 タスクが同じ app.log に書き、Log4j2 が 10 秒ごとにロールオーバ（gz 圧縮→元ファイル削除）する（NFSv3）
+# 2026-10-09 23:33:46 +0900
+
+$ [a] bash /opt/tools/estale-diag.sh -q; echo exit=$?
+
+== 判定
+- Java が掴んでいるファイル 1 個が Stale: 別タスク・別ホストがそのファイル（または親ディレクトリ）を削除した。JBoss の reload かタスク入れ替えで開き直す。根本対策はタスクごとのログパス
+→ 優先対応: 消した側（別タスクのロールオーバ・削除バッチ・手作業）を特定して止め、JBoss の reload かタスク入れ替えで開き直す
+exit=1
+
+$ [a] grep -n -m6 -E 'ERROR|Caused by|IOException' /tmp/s6.out; grep -o 'SUMMARY.*' /tmp/s6.out
+2:2026-10-09T14:34:00.195889991Z main ERROR RollingFileManager /webapp/webapp9mf02/logs/app.log Unable to close stream: java.io.IOException: Stale file handle
+3:java.io.IOException: Stale file handle
+33:2026-10-09T14:34:13.050316840Z main ERROR Unable to write to stream /webapp/webapp9mf02/logs/app.log for appender APP
+62:Caused by: java.io.IOException: Stale file handle
+68:2026-10-09T14:34:13.051380536Z main ERROR An exception occurred processing Appender APP
+97:Caused by: java.io.IOException: Stale file handle
+SUMMARY events=225
+
+$ [b] grep -n -m6 -E 'ERROR|Caused by|IOException' /tmp/s6.out; grep -o 'SUMMARY.*' /tmp/s6.out
+2:2026-10-09T14:34:03.067980500Z main ERROR Unable to write to stream /webapp/webapp9mf02/logs/app.log for appender APP
+31:Caused by: java.io.IOException: Stale file handle
+37:2026-10-09T14:34:03.073135715Z main ERROR An exception occurred processing Appender APP
+66:Caused by: java.io.IOException: Stale file handle
+72:2026-10-09T14:34:03.274424195Z main ERROR Unable to write to stream /webapp/webapp9mf02/logs/app.log for appender APP
+101:Caused by: java.io.IOException: Stale file handle
+SUMMARY events=225
+
+$ [a] ls -la /webapp/webapp9mf02/logs/
+total 28
+drwxr-xr-x 2 root root 4096 Oct  9 14:34 .
+drwxr-xr-x 3 root root 4096 Oct  9 14:33 ..
+-rw-r--r-- 1 root root  112 Oct  9 14:33 app-2026-10-09-14-33-49.log.gz
+-rw-r--r-- 1 root root  262 Oct  9 14:34 app-2026-10-09-14-33-59.log.gz
+-rw-r--r-- 1 root root  276 Oct  9 14:34 app-2026-10-09-14-34-09.log.gz
+-rw-r--r-- 1 root root  184 Oct  9 14:34 app-2026-10-09-14-34-29.log.gz
+-rw-r--r-- 1 root root  812 Oct  9 14:34 app.log
+出力した行: A=225 B=225 / サーバに残った行: A=61 B=103
+>>> 判定 [OK] 期待: 片方に AppenderLoggingException … Caused by: IOException: Stale file handle / 観測: Stale の出現 A=12 B=10回 / 出力 A=225 B=225 / 残った A=61 B=103

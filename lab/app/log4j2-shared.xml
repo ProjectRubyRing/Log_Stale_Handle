@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- いまの構成の再現: 全タスクが同じパス（シンボリックリンク経由で EFS の共有ディレクトリ）に書く。
+     10 秒ごとにロールオーバし（本番の 1 時間・1 日を縮めたもの）、gz 圧縮のあと元ファイルを消す（Log4j2 の既定動作）。 -->
+<Configuration status="WARN" name="lab-shared">
+  <Appenders>
+    <RollingFile name="APP"
+                 fileName="/webapp/webapp9mf02/logs/app.log"
+                 filePattern="/webapp/webapp9mf02/logs/app-%d{yyyy-MM-dd-HH-mm-ss}.log.gz">
+      <PatternLayout pattern="%d{HH:mm:ss.SSS} %m%n"/>
+      <Policies>
+        <TimeBasedTriggeringPolicy interval="10" modulate="true"/>
+      </Policies>
+      <DefaultRolloverStrategy/>
+    </RollingFile>
+  </Appenders>
+  <Loggers>
+    <Root level="info">
+      <AppenderRef ref="APP"/>
+    </Root>
+  </Loggers>
+</Configuration>

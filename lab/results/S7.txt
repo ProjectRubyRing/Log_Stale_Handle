@@ -1,0 +1,41 @@
+# S7  恒久対策の確認: タスクごとのディレクトリ（APP_LOG_ID）に書く。条件は S6 と同じ（NFSv3＝最も厳しいサーバ）
+# 2026-10-09 23:35:37 +0900
+
+$ [a] grep -c 'Stale file handle' /tmp/s7.out; grep -o 'SUMMARY.*' /tmp/s7.out
+0
+SUMMARY events=225
+
+$ [b] grep -c 'Stale file handle' /tmp/s7.out; grep -o 'SUMMARY.*' /tmp/s7.out
+0
+SUMMARY events=225
+
+$ [a] ls -la /webapp/webapp9mf02/logs/ /webapp/webapp9mf02/logs/task-a-0001 /webapp/webapp9mf02/logs/task-b-0002
+/webapp/webapp9mf02/logs/:
+total 16
+drwxr-xr-x 4 root root 4096 Oct  9 14:35 .
+drwxr-xr-x 3 root root 4096 Oct  9 14:35 ..
+drwxr-xr-x 2 root root 4096 Oct  9 14:36 task-a-0001
+drwxr-xr-x 2 root root 4096 Oct  9 14:36 task-b-0002
+
+/webapp/webapp9mf02/logs/task-a-0001:
+total 32
+drwxr-xr-x 2 root root 4096 Oct  9 14:36 .
+drwxr-xr-x 4 root root 4096 Oct  9 14:35 ..
+-rw-r--r-- 1 root root   99 Oct  9 14:35 app-2026-10-09-14-35-39.log.gz
+-rw-r--r-- 1 root root  278 Oct  9 14:35 app-2026-10-09-14-35-49.log.gz
+-rw-r--r-- 1 root root  276 Oct  9 14:36 app-2026-10-09-14-35-59.log.gz
+-rw-r--r-- 1 root root  281 Oct  9 14:36 app-2026-10-09-14-36-09.log.gz
+-rw-r--r-- 1 root root  271 Oct  9 14:36 app-2026-10-09-14-36-19.log.gz
+-rw-r--r-- 1 root root  476 Oct  9 14:36 app.log
+
+/webapp/webapp9mf02/logs/task-b-0002:
+total 28
+drwxr-xr-x 2 root root 4096 Oct  9 14:36 .
+drwxr-xr-x 4 root root 4096 Oct  9 14:35 ..
+-rw-r--r-- 1 root root  254 Oct  9 14:35 app-2026-10-09-14-35-49.log.gz
+-rw-r--r-- 1 root root  280 Oct  9 14:36 app-2026-10-09-14-35-59.log.gz
+-rw-r--r-- 1 root root  279 Oct  9 14:36 app-2026-10-09-14-36-09.log.gz
+-rw-r--r-- 1 root root  280 Oct  9 14:36 app-2026-10-09-14-36-19.log.gz
+-rw-r--r-- 1 root root  896 Oct  9 14:36 app.log
+出力した行: A=225 B=225 / サーバに残った行: A=225 B=225
+>>> 判定 [OK] 期待: ESTALE 0 件・欠けた行 0 / 観測: Stale A=0 B=0 / 出力 A=225 B=225 / 残った A=225 B=225

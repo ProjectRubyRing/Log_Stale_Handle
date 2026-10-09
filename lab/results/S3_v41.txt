@@ -1,0 +1,40 @@
+# S3_v41  別クライアントが、マウントの根元（rootDirectory・アクセスポイントのルート）を削除して作り直す（NFSv4.1）
+# 2026-10-09 23:32:09 +0900
+
+$ [b] stat -c 'before inode=%i' /mnt/logs/logs-root; rm -rf /mnt/logs/logs-root && mkdir -p /mnt/logs/logs-root/front/inter-api/logs && stat -c 'after  inode=%i' /mnt/logs/logs-root
+before inode=138237
+after  inode=138266
+
+$ [a] ls -la /mnt/logs; echo rc=$?; stat /mnt/logs; echo rc=$?; mkdir -p /mnt/logs/front/inter-api/logs; echo rc=$?; touch /webapp/webapp9mf02/logs/probe.txt; echo rc=$?
+ls: cannot open directory '/mnt/logs': Stale file handle
+rc=2
+stat: cannot statx '/mnt/logs': Stale file handle
+rc=1
+mkdir: cannot create directory '/mnt/logs': Stale file handle
+rc=1
+touch: cannot touch '/webapp/webapp9mf02/logs/probe.txt': No such file or directory
+rc=1
+
+$ [a] bash /opt/tools/estale-diag.sh -q --probe; echo exit=$?
+
+== 判定
+- /mnt/logs の根元が Stale: EFS 側で rootDirectory／アクセスポイントのルート（またはその上）が削除・作り直しされた。このタスクでは直らない → タスクを入れ替える
+- /webapp/webapp9mf02/logs の行き先が無い: EFS 側のディレクトリが未作成・削除済み、または上位が Stale（マウント欄を確認）
+- Java が掴んでいるファイル 1 個が Stale: 別タスク・別ホストがそのファイル（または親ディレクトリ）を削除した。JBoss の reload かタスク入れ替えで開き直す。根本対策はタスクごとのログパス
+- /mnt/logs に新しいファイルを作れない（ENOENT）: ロールオーバや新しいログも書けない
+→ 優先対応: このタスクを入れ替える（aws ecs stop-task、またはサービスの force-new-deployment）
+exit=2
+
+$ [a] cat /tmp/s3.out
+14:32:10.607 [A] opened /webapp/webapp9mf02/logs/app.log (append)
+14:32:30.763 [A] close OK
+14:32:30.767 [A] SUMMARY writes=67 errors=0 firstError=-
+
+$ [a] マウントし直す（ECS ではタスクの入れ替えに相当）
+
+$ [a] ls -la /webapp/webapp9mf02/logs/ && touch /webapp/webapp9mf02/logs/probe.txt && echo REMOUNT_OK
+total 8
+drwxr-xr-x 2 root root 4096 Oct  9 14:32 .
+drwxr-xr-x 3 root root 4096 Oct  9 14:32 ..
+REMOUNT_OK
+>>> 判定 [OK] 期待: ls・stat・mkdir が ESTALE、マウントし直すまで直らない / 観測: マウント中は ESTALE / 再マウントで回復 / Java: SUMMARY writes=67 errors=0 firstError=-

@@ -1,0 +1,19 @@
+# =============================================================================
+# docker/front/Dockerfile の「1. アプリログ」を差し替える例（back も同じ。パスは webapp9mb02）
+#   変更前: /webapp/webapp9mf02/logs -> /mnt/logs/<Component_name>/logs/<Service_Name>   （全タスク共有）
+#   変更後: /webapp/webapp9mf02/logs -> /opt/jboss-eap/standalone/tmp/app-log-target    （タスクローカル）
+#           起動時に app-log-dir.sh が tmp/app-log-target -> EFS の app/<APP_LOG_ID> を張る
+#   readonlyRootFilesystem=true のまま使える（ルート FS に置くのはリンクだけ。中身は tmp ボリューム側）
+# =============================================================================
+
+# --- 1. アプリログ: /webapp/webapp9mf02/logs -> tmp/app-log-target -----------
+RUN rm -rf /webapp/webapp9mf02/logs \
+    && ln -s /opt/jboss-eap/standalone/tmp/app-log-target /webapp/webapp9mf02/logs
+
+# 起動時にリンク先を作る部品（base イメージに入れて全サービスで共有してよい）
+COPY app-log-dir.sh /usr/local/bin/app-log-dir.sh
+RUN sed -i 's/\r$//' /usr/local/bin/app-log-dir.sh && chmod 755 /usr/local/bin/app-log-dir.sh
+
+# --- efs-entrypoint.sh への追記（JBoss を exec する前。LOG_ID を決めた後に置くと JBoss ログと同じ名前になる）
+#   . /usr/local/bin/app-log-dir.sh
+#   setup_app_log_dir || die "アプリログのディレクトリを用意できません"

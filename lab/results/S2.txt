@@ -1,0 +1,20 @@
+# S2  別クライアントが、ログのディレクトリを削除して作り直す（NFSv4.1）
+# 2026-10-09 23:31:57 +0900
+
+$ [b] stat -c 'before inode=%i' /mnt/logs/front/inter-api/logs; rm -rf /mnt/logs/front/inter-api/logs && mkdir -p /mnt/logs/front/inter-api/logs && stat -c 'after  inode=%i' /mnt/logs/front/inter-api/logs
+before inode=138252
+after  inode=138261
+
+$ [a] cat /tmp/s2.out
+--- ls .（カレントディレクトリ）
+ls: .: Stale file handle
+ls: cannot open directory '.': Stale file handle
+rc=2
+--- ls（パス名で引き直す）
+total 8
+drwxr-xr-x 2 root root 4096 Oct  9 14:32 .
+drwxr-xr-x 3 root root 4096 Oct  9 14:32 ..
+rc=0
+--- 新しいファイルを作る
+NEWFILE_OK
+>>> 判定 [OK] 期待: 掴んでいるもの（カレントディレクトリ）は ESTALE、パス名で開き直すものは自動で直る / 観測: cwd=ESTALE / パス名=OK / 新規作成=OK

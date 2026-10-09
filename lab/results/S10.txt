@@ -1,0 +1,21 @@
+# S10  Log4j2 の保険（impl/log4j2-pertask.xml の Failover）: 別クライアントがファイルを消しても、ログは標準出力へ逃げる（NFSv3）
+# 2026-10-09 23:39:52 +0900
+
+$ [b] ls -la /mnt/logs/front/inter-api/logs/task-a-0001/; rm -v /mnt/logs/front/inter-api/logs/task-a-0001/app.log
+total 8
+drwxr-xr-x 2 root root 4096 Oct  9 14:39 .
+drwxr-xr-x 3 root root 4096 Oct  9 14:39 ..
+-rw-r--r-- 1 root root    0 Oct  9 14:39 app.log
+removed '/mnt/logs/front/inter-api/logs/task-a-0001/app.log'
+
+$ [a] grep -m4 -E 'ERROR|Stale' /tmp/s10.out | cut -c1-200; echo '--- 標準出力へ逃げた行（Failover）'; grep -c 'lab - task=A seq=' /tmp/s10.out; grep 'lab - task=A seq=' /tmp/s10.out | tail -2; grep -o 'SUMMARY.*' /tmp/s10.out
+2026-10-09T14:40:02.461299956Z main ERROR Unable to write to stream /webapp/webapp9mf02/logs/task-a-0001/app.log for appender APP_FILE
+	at StaleLab.log4j(StaleLab.java:88)
+	at StaleLab.main(StaleLab.java:43)
+Caused by: java.io.IOException: Stale file handle
+--- 標準出力へ逃げた行（Failover）
+80
+2026-10-09T14:40:18.103Z INFO  [main] lab - task=A seq=124
+2026-10-09T14:40:18.304Z INFO  [main] lab - task=A seq=125
+SUMMARY events=125
+>>> 判定 [OK] 期待: ファイルに書けない間のログが標準出力（CloudWatch Logs）に出る / 観測: 出力 125 行のうち 80 行が標準出力へ

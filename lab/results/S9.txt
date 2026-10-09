@@ -1,0 +1,22 @@
+# S9  参考: NFS サーバの再起動（同じ fsid）と、エクスポートの付け替え（fsid を変える）（NFSv3）
+# 2026-10-09 23:39:01 +0900
+
+$ [a] echo before > /webapp/webapp9mf02/logs/s9.txt && cat /webapp/webapp9mf02/logs/s9.txt
+before
+
+$ [server] 同じ fsid で NFS サーバを作り直す（再起動に相当）
+
+$ [a] cat /webapp/webapp9mf02/logs/s9.txt && echo after-restart >> /webapp/webapp9mf02/logs/s9.txt && echo RESTART_OK
+before
+RESTART_OK
+
+$ [server] fsid を 0 → 7 に変えて作り直す（エクスポートの付け替え）
+
+$ [a] cat /webapp/webapp9mf02/logs/s9.txt; echo rc=$?; ls /mnt/logs; echo rc=$?
+cat: /webapp/webapp9mf02/logs/s9.txt: Stale file handle
+rc=1
+ls: cannot access '/mnt/logs': Stale file handle
+rc=2
+
+$ [server] fsid を 0 に戻す
+>>> 判定 [OK] 期待: 再起動では ESTALE にならず、付け替えると ESTALE / 観測: 再起動=OK / 付け替え=ESTALE

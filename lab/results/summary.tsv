@@ -1,0 +1,15 @@
+ケース	NFS	条件	期待	観測	判定
+S1_v41	v4.1	別クライアントが開いているファイルを削除	knfsd は実体を残すのでエラーにならない（書いた行は消える）	SUMMARY writes=74 errors=0 firstError=-	OK
+S1_v3	v3	別クライアントが開いているファイルを削除	書き込みが ESTALE（IOException: Stale file handle）	SUMMARY writes=74 errors=47 firstError=14:31:37.951 seq=28	OK
+S2	v4.1	ログのディレクトリを作り直す	掴んでいるもの（カレントディレクトリ）は ESTALE、パス名で開き直すものは自動で直る	cwd=ESTALE / パス名=OK / 新規作成=OK	OK
+S3_v41	v4.1	マウントの根元を作り直す	ls・stat・mkdir が ESTALE、マウントし直すまで直らない	マウント中は ESTALE / 再マウントで回復 / Java: SUMMARY writes=67 errors=0 firstError=-	OK
+S3_v3	v3	マウントの根元を作り直す	ls・stat・mkdir が ESTALE、マウントし直すまで直らない	マウント中は ESTALE / 再マウントで回復 / Java: SUMMARY writes=67 errors=57 firstError=14:32:39.388 seq=11	OK
+S4	v4.1	同じクライアントで使用中ファイルを削除	.nfsXXXX に改名されエラーにならない。閉じると中身ごと消える	SUMMARY writes=47 errors=0 firstError=- / 閉じた後の .nfs=0	OK
+S5	v4.1	書き込み中にマウントを外して付け直す（仮説）	ESTALE にならない（古い FD は外したマウント経由で書き続ける）	SUMMARY writes=67 errors=0 firstError=- / サーバ上の行数=67	OK
+S6_v3	v3	2 タスクが同じファイル＋ロールオーバ	片方に AppenderLoggingException … Caused by: IOException: Stale file handle	Stale の出現 A=12 B=10回 / 出力 A=225 B=225 / 残った A=61 B=103	OK
+S6_v41	v4.1	2 タスクが同じファイル＋ロールオーバ	knfsd ではエラーが出ないことがあるが、行は欠ける	Stale の出現 A=0 B=0回 / 出力 A=225 B=225 / 残った A=49 B=175	OK
+S7	v3	タスクごとのディレクトリに書く（対策後）	ESTALE 0 件・欠けた行 0	Stale A=0 B=0 / 出力 A=225 B=225 / 残った A=225 B=225	OK
+S8_v3	v3	診断スクリプトの判定	正常は 0、改名後は REPLACED（1）。削除後は v3 で STALE（1）、knfsd v4.1 は STALE か REPLACED（1）	正常=exit=0 / 改名+作り直し 1 秒後=exit=0（31 秒後=exit=1）REPLACED 表示 1 / 改名先も削除=exit=1（STALE 表示 1）	OK
+S8_v41	v4.1	診断スクリプトの判定	正常は 0、改名後は REPLACED（1）。削除後は v3 で STALE（1）、knfsd v4.1 は STALE か REPLACED（1）	正常=exit=0 / 改名+作り直し 1 秒後=exit=1（31 秒後=-）REPLACED 表示 1 / 改名先も削除=exit=1（STALE 表示 1）	OK
+S9	v3	サーバ再起動 / fsid の付け替え	再起動では ESTALE にならず、付け替えると ESTALE	再起動=OK / 付け替え=ESTALE	OK
+S10	v3	Failover の保険（ファイルが消された後）	ファイルに書けない間のログが標準出力（CloudWatch Logs）に出る	出力 125 行のうち 80 行が標準出力へ	OK

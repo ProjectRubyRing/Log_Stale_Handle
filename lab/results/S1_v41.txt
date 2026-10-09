@@ -1,0 +1,25 @@
+# S1_v41  別タスク（別 NFS クライアント）が、Java が開いているログファイルを削除する（NFSv4.1）
+# 2026-10-09 23:31:00 +0900
+
+$ [a] grep ' /mnt/logs ' /proc/mounts; ls -l /webapp/webapp9mf02/logs
+172.30.0.10:/logs-root /mnt/logs nfs4 rw,relatime,vers=4.1,rsize=524288,wsize=524288,namlen=255,hard,noresvport,proto=tcp,timeo=600,retrans=2,sec=sys,clientaddr=172.30.0.11,local_lock=none,addr=172.30.0.10 0 0
+lrwxrwxrwx 1 root root 30 Oct  9 13:36 /webapp/webapp9mf02/logs -> /mnt/logs/front/inter-api/logs
+
+$ [b] date '+%H:%M:%S.%3N'; ls -li /mnt/logs/front/inter-api/logs; rm -v /mnt/logs/front/inter-api/logs/app.log
+14:31:05.001
+total 0
+138262 -rw-r--r-- 1 root root 0 Oct  9 14:31 app.log
+removed '/mnt/logs/front/inter-api/logs/app.log'
+
+$ [a] bash /opt/tools/estale-diag.sh -q; echo exit=$?
+
+== 判定
+- FD 1 個が名前の無い実体を掴んでいる: 改名・削除済み。EFS 上で消されていれば次の書き込みで Stale になる
+→ 優先対応: 消した側（別タスクのロールオーバ・削除バッチ・手作業）を特定して止め、JBoss の reload かタスク入れ替えで開き直す
+exit=1
+
+$ [a] cat /tmp/s1.out
+14:31:01.541 [A] opened /webapp/webapp9mf02/logs/app.log (append)
+14:31:23.795 [A] close OK
+14:31:23.799 [A] SUMMARY writes=74 errors=0 firstError=-
+>>> 判定 [OK] 期待: knfsd は実体を残すのでエラーにならない（書いた行は消える） / 観測: SUMMARY writes=74 errors=0 firstError=-

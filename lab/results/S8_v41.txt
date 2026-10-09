@@ -1,0 +1,56 @@
+# S8_v41  診断スクリプトの判定: 正常 → 改名して作り直し（REPLACED）→ 改名先も削除（STALE）（NFSv4.1）
+# 2026-10-09 23:37:46 +0900
+
+$ [a] bash /opt/tools/estale-diag.sh; echo exit=$?
+
+== 環境
+estale-diag 1.0.0  2026-10-09 14:37:49 +0000
+host=task-a  kernel=5.15.153.1-microsoft-standard-WSL2  uid=0
+
+== NFS マウント（EFS）
+[/mnt/logs] source=172.30.0.10:/logs-root type=nfs4 vers=4.1 hard timeo=600
+    統計: age=3s tcp接続回数=2 
+    根元: OK (inode=138235)
+
+== シンボリックリンク
+[/webapp/webapp9mf02/logs] -> /mnt/logs/front/inter-api/logs  （最終: /mnt/logs/front/inter-api/logs）  OK inode=138238
+
+== Java プロセスが開いているファイル（NFS 上のもの）
+[pid 20] java: java -cp /opt/lab/classes:/opt/lab/lib/* StaleLab raw /webapp/webapp9mf02/logs/app.log ...
+    fd 4: OK      /mnt/logs/front/inter-api/logs/app.log (inode=138263)
+集計: STALE=0 REPLACED=0 MISSING=0 SILLY=0 OK=1
+
+== .nfsXXXX（使用中に削除されたファイルの名残）
+なし
+
+== 判定
+異常なし（Stale・応答なしは見つからない）
+exit=0
+
+$ [b] mv /mnt/logs/front/inter-api/logs/app.log /mnt/logs/front/inter-api/logs/app.1 && touch /mnt/logs/front/inter-api/logs/app.log && ls -li /mnt/logs/front/inter-api/logs
+total 0
+138263 -rw-r--r-- 1 root root 0 Oct  9 14:37 app.1
+138264 -rw-r--r-- 1 root root 0 Oct  9 14:37 app.log
+
+$ [a] bash /opt/tools/estale-diag.sh -q; echo exit=$?
+
+== 判定
+- FD 1 個が古い実体を掴んでいる（名前は別ファイル）: 同じパスを複数タスクが使い、他タスクがローテーションした跡。ログが想定と違うファイルに入っている
+→ 優先対応: 消した側（別タスクのロールオーバ・削除バッチ・手作業）を特定して止め、JBoss の reload かタスク入れ替えで開き直す
+exit=1
+
+$ [b] rm -v /mnt/logs/front/inter-api/logs/app.1
+removed '/mnt/logs/front/inter-api/logs/app.1'
+
+$ [a] bash /opt/tools/estale-diag.sh -q; echo exit=$?
+
+== 判定
+- Java が掴んでいるファイル 1 個が Stale: 別タスク・別ホストがそのファイル（または親ディレクトリ）を削除した。JBoss の reload かタスク入れ替えで開き直す。根本対策はタスクごとのログパス
+→ 優先対応: 消した側（別タスクのロールオーバ・削除バッチ・手作業）を特定して止め、JBoss の reload かタスク入れ替えで開き直す
+exit=1
+
+$ [a] cat /tmp/s8.out
+14:37:47.362 [A] opened /webapp/webapp9mf02/logs/app.log (append)
+14:38:57.667 [A] close OK
+14:38:57.671 [A] SUMMARY writes=234 errors=0 firstError=-
+>>> 判定 [OK] 期待: 正常は 0、改名後は REPLACED（1）。削除後は v3 で STALE（1）、knfsd v4.1 は STALE か REPLACED（1） / 観測: 正常=exit=0 / 改名+作り直し 1 秒後=exit=1（31 秒後=-）REPLACED 表示 1 / 改名先も削除=exit=1（STALE 表示 1）

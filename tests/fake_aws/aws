@@ -1,0 +1,84 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+テスト用の偽 aws コマンド（efs-log-housekeeping.sh が使う呼び出しだけを再現する）
+
+ロールは環境変数 FAKE_AWS_ROLE（無ければ ops）:
+  ops        … ECS を参照できる
+  codecommit … sts は成功するが ecs は AccessDenied（CodeCommit 用の権限のまま）
+  none       … 未認証（aws login --remote していない）
+  netdown    … AWS へ接続できない
+データ: $FAKE_AWS_DIR/tasks/<クラスター>_<RUNNING|STOPPED>.txt（タスク ARN を 1 行ずつ）
+        クラスターのファイルが 1 つも無いクラスターは ClusterNotFoundException
+呼び出しは $FAKE_AWS_DIR/calls.log に記録する。
+"""
+import json
+import os
+import sys
+
+D = os.environ.get("FAKE_AWS_DIR", "/tmp/fake_aws")
+ARN = {
+    "ops": "arn:aws:sts::123456789012:assumed-role/OpsAdmin/taro.yamada",
+    "codecommit": "arn:aws:sts::123456789012:assumed-role/CodeCommitDeveloper/taro.yamada",
+}
+
+
+def err(text, code=254):
+    sys.stderr.write("\n%s\n" % text)
+    sys.exit(code)
+
+
+def main(argv):
+    os.makedirs(D, exist_ok=True)
+    with open(os.path.join(D, "calls.log"), "a", encoding="utf-8") as f:
+        f.write(" ".join(argv) + "\n")
+    role = os.environ.get("FAKE_AWS_ROLE", "ops")
+    opts = {}
+    pos = []
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a.startswith("--"):
+            if i + 1 < len(argv) and not argv[i + 1].startswith("--"):
+                opts[a] = argv[i + 1]
+                i += 2
+                continue
+            opts[a] = True
+        else:
+            pos.append(a)
+        i += 1
+    if role == "netdown":
+        err("Could not connect to the endpoint URL: \"https://sts.ap-northeast-1.amazonaws.com/\"", 255)
+    if role == "none":
+        err("Unable to locate credentials. You can configure credentials by running \"aws login\".", 253)
+    if pos[:2] == ["sts", "get-caller-identity"]:
+        print(ARN.get(role, ARN["ops"]))
+        return 0
+    if pos[:2] == ["ecs", "list-tasks"]:
+        if role != "ops":
+            err("An error occurred (AccessDeniedException) when calling the ListTasks operation: User: %s "
+                "is not authorized to perform: ecs:ListTasks on resource: * because no identity-based "
+                "policy allows the ecs:ListTasks action" % ARN["codecommit"])
+        cl = opts.get("--cluster", "default")
+        st = opts.get("--desired-status", "RUNNING")
+        tdir = os.path.join(D, "tasks")
+        known = os.path.isdir(tdir) and any(n.startswith(cl + "_") for n in os.listdir(tdir))
+        if not known:
+            err("An error occurred (ClusterNotFoundException) when calling the ListTasks operation: Cluster not found.")
+        path = os.path.join(tdir, "%s_%s.txt" % (cl, st))
+        arns = []
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as f:
+                arns = [x.strip() for x in f if x.strip()]
+        if "--max-results" in opts:
+            arns = arns[: int(opts["--max-results"])]
+        if opts.get("--output") == "text":
+            print("\t".join(arns) if arns else "None")
+        else:
+            print(json.dumps({"taskArns": arns}))
+        return 0
+    err("fake aws: 未対応の呼び出し: %s" % " ".join(argv), 252)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

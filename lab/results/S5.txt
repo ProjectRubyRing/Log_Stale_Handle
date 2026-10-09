@@ -1,0 +1,22 @@
+# S5  仮説の検証: Java が書いている最中に EFS のマウントを外して付け直す（NFSv4.1）
+# 2026-10-09 23:33:20 +0900
+
+$ [a] umount /mnt/logs; echo rc=$?
+umount: /mnt/logs: target is busy.
+rc=32
+
+$ [a] umount -l /mnt/logs; echo rc=$?; mount -i -t nfs4 -o vers=4.1,addr=172.30.0.10,hard,timeo=600,retrans=2,noresvport 172.30.0.10:/logs-root /mnt/logs; echo mount_rc=$?; grep ' /mnt/logs ' /proc/mounts | cut -c1-60; echo hi > /webapp/webapp9mf02/logs/after-remount.txt && echo NEW_OPEN_OK
+rc=0
+mount_rc=0
+172.30.0.10:/logs-root /mnt/logs nfs4 rw,relatime,vers=4.1,r
+NEW_OPEN_OK
+
+$ [a] cat /tmp/s5.out
+14:33:21.270 [A] opened /webapp/webapp9mf02/logs/app.log (append)
+14:33:41.429 [A] close OK
+14:33:41.432 [A] SUMMARY writes=67 errors=0 firstError=-
+
+$ [b] wc -l /mnt/logs/front/inter-api/logs/app.log; tail -1 /mnt/logs/front/inter-api/logs/app.log
+67 /mnt/logs/front/inter-api/logs/app.log
+14:33:41.126 task=A seq=67
+>>> 判定 [OK] 期待: ESTALE にならない（古い FD は外したマウント経由で書き続ける） / 観測: SUMMARY writes=67 errors=0 firstError=- / サーバ上の行数=67

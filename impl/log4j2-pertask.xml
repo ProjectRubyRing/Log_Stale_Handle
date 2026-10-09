@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  log4j2-pertask.xml : 「アプリ側でタスクごとのディレクトリに分ける」方式の例（案 B）
+    リンク方式（Dockerfile.front.snippet + app-log-dir.sh）を採るなら、この変更は不要
+    （/webapp/webapp9mf02/logs がすでにタスクごとのディレクトリを指すため）。
+
+  守ること
+    1. fileName / filePattern に必ずタスク固有の値（APP_LOG_ID）を入れる。共有パスに書かない
+    2. Delete（世代管理）の basePath は「自分のディレクトリ」だけにする。共有の親を指定すると
+       他タスクが開いているファイルを消してしまい、相手が Stale file handle になる
+    3. 監視・集約は CloudWatch Logs（コンソール出力）を正にし、EFS のファイルは控えと考える
+-->
+<Configuration status="WARN" name="app-pertask" shutdownTimeout="5000">
+  <Properties>
+    <Property name="APP_LOG_ID">${env:APP_LOG_ID:-${hostName}}</Property>
+    <Property name="LOG_DIR">/webapp/webapp9mf02/logs/${APP_LOG_ID}</Property>
+    <Property name="PATTERN">%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %-5level [%t] %c{1.} - %m%n%xEx</Property>
+  </Properties>
+  <Appenders>
+    <Console name="STDOUT" target="SYSTEM_OUT" follow="true">
+      <PatternLayout pattern="${PATTERN}" charset="UTF-8"/>
+    </Console>
+    <RollingFile name="APP_FILE"
+                 fileName="${LOG_DIR}/app.log"
+                 filePattern="${LOG_DIR}/app-%d{yyyy-MM-dd}.log.gz"
+                 ignoreExceptions="false">
+      <PatternLayout pattern="${PATTERN}" charset="UTF-8"/>
+      <Policies>
+        <TimeBasedTriggeringPolicy interval="1"/>
+      </Policies>
+      <DefaultRolloverStrategy>
+        <!-- 自分のディレクトリの中だけを掃除する（maxDepth=1） -->
+        <Delete basePath="${LOG_DIR}" maxDepth="1">
+          <IfFileName glob="app-*.log.gz"/>
+          <IfLastModified age="P30D"/>
+        </Delete>
+      </DefaultRolloverStrategy>
+    </RollingFile>
+    <!-- ファイルに書けなくなったら（Stale file handle 等）、コンソール（CloudWatch Logs）へ逃がす -->
+    <Failover name="APP" primary="APP_FILE" retryIntervalSeconds="60">
+      <Failovers>
+        <AppenderRef ref="STDOUT"/>
+      </Failovers>
+    </Failover>
+  </Appenders>
+  <Loggers>
+    <Root level="INFO">
+      <AppenderRef ref="APP"/>
+    </Root>
+  </Loggers>
+</Configuration>

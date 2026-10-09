@@ -1,0 +1,2 @@
+log_group_names = ["/ecs/interapi", "/ecs/intra-api", "/ecs/intra-web", "/ecs/sfapi"]
+alarm_actions   = ["arn:aws:sns:ap-northeast-1:123456789012:ops-alert"]

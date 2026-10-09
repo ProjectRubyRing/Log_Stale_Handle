@@ -1,0 +1,33 @@
+# S1_v3  別タスク（別 NFS クライアント）が、Java が開いているログファイルを削除する（NFSv3）
+# 2026-10-09 23:31:28 +0900
+
+$ [a] grep ' /mnt/logs ' /proc/mounts; ls -l /webapp/webapp9mf02/logs
+172.30.0.10:/export/logs-root /mnt/logs nfs rw,relatime,vers=3,rsize=524288,wsize=524288,namlen=255,hard,nolock,proto=tcp,timeo=600,retrans=2,sec=sys,mountaddr=172.30.0.10,mountvers=3,mountproto=tcp,local_lock=all,addr=172.30.0.10 0 0
+lrwxrwxrwx 1 root root 30 Oct  9 13:36 /webapp/webapp9mf02/logs -> /mnt/logs/front/inter-api/logs
+
+$ [b] date '+%H:%M:%S.%3N'; ls -li /mnt/logs/front/inter-api/logs; rm -v /mnt/logs/front/inter-api/logs/app.log
+14:31:33.308
+total 0
+138264 -rw-r--r-- 1 root root 0 Oct  9 14:31 app.log
+removed '/mnt/logs/front/inter-api/logs/app.log'
+
+$ [a] bash /opt/tools/estale-diag.sh -q; echo exit=$?
+
+== 判定
+- Java が掴んでいるファイル 1 個が Stale: 別タスク・別ホストがそのファイル（または親ディレクトリ）を削除した。JBoss の reload かタスク入れ替えで開き直す。根本対策はタスクごとのログパス
+→ 優先対応: 消した側（別タスクのロールオーバ・削除バッチ・手作業）を特定して止め、JBoss の reload かタスク入れ替えで開き直す
+exit=1
+
+$ [a] cat /tmp/s1.out
+14:31:29.816 [A] opened /webapp/webapp9mf02/logs/app.log (append)
+14:31:37.958 [A] write FAILED at seq=28
+java.io.IOException: Stale file handle
+	at java.base/java.io.FileOutputStream.writeBytes(Native Method)
+	at java.base/java.io.FileOutputStream.write(FileOutputStream.java:346)
+	at StaleLab.raw(StaleLab.java:58)
+	at StaleLab.main(StaleLab.java:41)
+14:31:43.666 [A] still failing: errors=20 (Stale file handle)
+14:31:49.684 [A] still failing: errors=40 (Stale file handle)
+14:31:52.089 [A] close FAILED: java.io.IOException: Stale file handle
+14:31:52.091 [A] SUMMARY writes=74 errors=47 firstError=14:31:37.951 seq=28
+>>> 判定 [OK] 期待: 書き込みが ESTALE（IOException: Stale file handle） / 観測: SUMMARY writes=74 errors=47 firstError=14:31:37.951 seq=28

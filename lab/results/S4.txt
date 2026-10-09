@@ -1,0 +1,26 @@
+# S4  同じタスク（同じ NFS クライアント）の中で、Java が開いているファイルを削除する（NFSv4.1）
+# 2026-10-09 23:33:01 +0900
+
+$ [a] rm -v /webapp/webapp9mf02/logs/app.log; ls -la /webapp/webapp9mf02/logs/
+removed '/webapp/webapp9mf02/logs/app.log'
+total 12
+drwxr-xr-x 2 root root 4096 Oct  9 14:33 .
+drwxr-xr-x 3 root root 4096 Oct  9 14:33 ..
+-rw-r--r-- 1 root root  234 Oct  9 14:33 .nfs0000000000021c1900000004
+
+$ [a] bash /opt/tools/estale-diag.sh -q; echo exit=$?
+
+== 判定
+- FD 1 個が .nfs ファイル（同じタスク内で使用中に削除）: 容量を使い続け、閉じると中身ごと消える
+→ 優先対応: 消した側（別タスクのロールオーバ・削除バッチ・手作業）を特定して止め、JBoss の reload かタスク入れ替えで開き直す
+exit=1
+
+$ [a] cat /tmp/s4.out; echo '--- Java が閉じたあと'; ls -la /webapp/webapp9mf02/logs/
+14:33:02.172 [A] opened /webapp/webapp9mf02/logs/app.log (append)
+14:33:16.321 [A] close OK
+14:33:16.325 [A] SUMMARY writes=47 errors=0 firstError=-
+--- Java が閉じたあと
+total 8
+drwxr-xr-x 2 root root 4096 Oct  9 14:33 .
+drwxr-xr-x 3 root root 4096 Oct  9 14:33 ..
+>>> 判定 [OK] 期待: .nfsXXXX に改名されエラーにならない。閉じると中身ごと消える / 観測: SUMMARY writes=47 errors=0 firstError=- / 閉じた後の .nfs=0

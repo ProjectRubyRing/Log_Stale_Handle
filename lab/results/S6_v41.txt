@@ -1,0 +1,28 @@
+# S6_v41  2 タスクが同じ app.log に書き、Log4j2 が 10 秒ごとにロールオーバ（gz 圧縮→元ファイル削除）する（NFSv4.1）
+# 2026-10-09 23:34:41 +0900
+
+$ [a] bash /opt/tools/estale-diag.sh -q; echo exit=$?
+
+== 判定
+- FD 1 個が古い実体を掴んでいる（名前は別ファイル）: 同じパスを複数タスクが使い、他タスクがローテーションした跡。ログが想定と違うファイルに入っている
+→ 優先対応: 消した側（別タスクのロールオーバ・削除バッチ・手作業）を特定して止め、JBoss の reload かタスク入れ替えで開き直す
+exit=1
+
+$ [a] grep -n -m6 -E 'ERROR|Caused by|IOException' /tmp/s6.out; grep -o 'SUMMARY.*' /tmp/s6.out
+SUMMARY events=225
+
+$ [b] grep -n -m6 -E 'ERROR|Caused by|IOException' /tmp/s6.out; grep -o 'SUMMARY.*' /tmp/s6.out
+SUMMARY events=225
+
+$ [a] ls -la /webapp/webapp9mf02/logs/
+total 32
+drwxr-xr-x 2 root root 4096 Oct  9 14:35 .
+drwxr-xr-x 3 root root 4096 Oct  9 14:34 ..
+-rw-r--r-- 1 root root  159 Oct  9 14:34 app-2026-10-09-14-34-49.log.gz
+-rw-r--r-- 1 root root  277 Oct  9 14:35 app-2026-10-09-14-34-59.log.gz
+-rw-r--r-- 1 root root  275 Oct  9 14:35 app-2026-10-09-14-35-09.log.gz
+-rw-r--r-- 1 root root  284 Oct  9 14:35 app-2026-10-09-14-35-19.log.gz
+-rw-r--r-- 1 root root  273 Oct  9 14:35 app-2026-10-09-14-35-29.log.gz
+-rw-r--r-- 1 root root  168 Oct  9 14:35 app.log
+出力した行: A=225 B=225 / サーバに残った行: A=49 B=175
+>>> 判定 [OK] 期待: knfsd ではエラーが出ないことがあるが、行は欠ける / 観測: Stale の出現 A=0 B=0回 / 出力 A=225 B=225 / 残った A=49 B=175
